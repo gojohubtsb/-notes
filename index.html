@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GlassVault | Secure Desktop Notes</title>
+    <style>
+        :root {
+            --bg: #020617;
+            --accent: #38bdf8;
+            --glass: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 255, 255, 0.08);
+            --text-dim: #94a3b8;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', -apple-system, sans-serif; }
+
+        body {
+            background-color: var(--bg);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.1) 0px, transparent 50%);
+            height: 100vh;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        /* Full Screen Blur Overlay for Errors/Landing */
+        .overlay {
+            position: fixed; inset: 0; z-index: 1000;
+            background: rgba(2, 6, 23, 0.85);
+            backdrop-filter: blur(40px);
+            -webkit-backdrop-filter: blur(40px);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            text-align: center; padding: 20px;
+        }
+
+        .glass-card {
+            background: var(--glass);
+            border: 1px solid var(--border);
+            padding: 50px;
+            border-radius: 40px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            max-width: 600px;
+        }
+
+        /* Main App Layout */
+        #app {
+            display: none; /* Hidden until browser check passes */
+            width: 95vw; height: 90vh;
+            max-width: 1400px;
+            background: var(--glass);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 32px;
+            grid-template-columns: 320px 1fr;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: rgba(0,0,0,0.2);
+            border-right: 1px solid var(--border);
+            display: flex; flex-direction: column;
+        }
+
+        .note-list { flex: 1; overflow-y: auto; padding: 20px; }
+
+        .note-item {
+            padding: 18px; border-radius: 16px; margin-bottom: 10px;
+            cursor: pointer; transition: 0.2s;
+            background: rgba(255,255,255,0.02);
+            border: 1px solid transparent;
+        }
+
+        .note-item:hover { background: rgba(255,255,255,0.05); }
+        .note-item.active { background: rgba(255,255,255,0.08); border-color: var(--accent); }
+
+        /* Editor */
+        .editor { padding: 60px 80px; display: flex; flex-direction: column; position: relative; }
+
+        #title-in {
+            background: transparent; border: none; color: white;
+            font-size: 3rem; font-weight: 800; outline: none; margin-bottom: 20px;
+            letter-spacing: -1.5px;
+        }
+
+        #body-in {
+            background: transparent; border: none; color: var(--text-dim);
+            font-size: 1.3rem; line-height: 1.8; outline: none; resize: none; flex: 1;
+        }
+
+        /* UI Elements */
+        .btn {
+            background: white; color: black; border: none;
+            padding: 14px 28px; border-radius: 12px; font-weight: 700;
+            cursor: pointer; transition: 0.2s;
+        }
+
+        .btn-outline { background: transparent; border: 1px solid var(--border); color: white; margin-left: 10px; }
+
+        .status-pill {
+            position: absolute; bottom: 30px; right: 40px;
+            background: rgba(0,0,0,0.4); padding: 8px 16px; border-radius: 20px;
+            font-size: 0.7rem; color: var(--accent); letter-spacing: 1px;
+            border: 1px solid var(--border);
+        }
+
+        .hidden { display: none !important; }
+
+        h1 { margin-bottom: 15px; }
+        p { color: var(--text-dim); line-height: 1.5; }
+    </style>
+</head>
+<body>
+
+    <!-- Error Screen: Unsupported Browser -->
+    <div id="error-screen" class="overlay hidden">
+        <div class="glass-card">
+            <h1 style="color: #ef4444;">Incompatible Browser</h1>
+            <p>To ensure your notes are **automatically synced** to your hard drive without repeated downloads, GlassVault requires the File System Access API.</p>
+            <br>
+            <p>Please switch to a supported Desktop browser:</p>
+            <div style="margin-top: 20px; font-weight: bold; color: white;">
+                Google Chrome &bull; Microsoft Edge &bull; Brave
+            </div>
+        </div>
+    </div>
+
+    <!-- Landing Screen: Create or Load -->
+    <div id="landing-screen" class="overlay">
+        <div class="glass-card">
+            <h1 style="font-size: 3.5rem; letter-spacing: -2px;">GlassVault</h1>
+            <p style="margin-bottom: 30px;">Direct-to-Disk Privacy. Your notes never touch our servers.</p>
+            <button class="btn" onclick="initializeVault(true)">Create New Note File</button>
+            <button class="btn btn-outline" onclick="initializeVault(false)">Load Existing File</button>
+        </div>
+    </div>
+
+    <!-- Main Application -->
+    <div id="app">
+        <aside class="sidebar">
+            <div style="padding: 25px;">
+                <button class="btn" style="width: 100%;" onclick="createNewNote()">+ New Note</button>
+            </div>
+            <div id="note-list" class="note-list"></div>
+        </aside>
+
+        <main class="editor">
+            <input type="text" id="title-in" placeholder="Untitled">
+            <textarea id="body-in" placeholder="Write your secrets..."></textarea>
+            <div class="status-pill" id="sync-status">VAULT LOCKED</div>
+        </main>
+    </div>
+
+    <script>
+        let fileHandle = null;
+        let notes = [];
+        let activeNoteId = null;
+        let autoSaveTimer;
+
+        // 1. Browser Support Check
+        window.onload = () => {
+            const isSupported = 'showSaveFilePicker' in window;
+            if (!isSupported) {
+                document.getElementById('error-screen').classList.remove('hidden');
+                document.getElementById('landing-screen').classList.add('hidden');
+            }
+        };
+
+        // 2. File Initialization
+        async function initializeVault(isNew) {
+            try {
+                if (isNew) {
+                    fileHandle = await window.showSaveFilePicker({
+                        suggestedName: 'vault_1.glass',
+                        types: [{ description: 'GlassVault', accept: {'application/json': ['.glass']} }]
+                    });
+                    notes = [{ id: Date.now(), title: "First Note", content: "This file updates automatically as you type.", time: Date.now() }];
+                    await saveFileToDisk();
+                } else {
+                    [fileHandle] = await window.showOpenFilePicker();
+                    const file = await fileHandle.getFile();
+                    notes = JSON.parse(await file.text());
+                }
+
+                document.getElementById('landing-screen').classList.add('hidden');
+                document.getElementById('app').style.display = 'grid';
+                renderSidebar();
+                if (notes.length > 0) selectNote(notes[0].id);
+
+            } catch (err) {
+                console.log("Access cancelled.");
+            }
+        }
+
+        // 3. Silent Background Sync
+        async function saveFileToDisk() {
+            if (!fileHandle) return;
+            
+            const status = document.getElementById('sync-status');
+            status.innerText = "SYNCING...";
+
+            try {
+                const writable = await fileHandle.createWritable();
+                await writable.write(JSON.stringify(notes));
+                await writable.close();
+                status.innerText = "FILE UPDATED";
+            } catch (err) {
+                status.innerText = "SYNC ERROR";
+            }
+        }
+
+        // 4. Logic & UI
+        function createNewNote() {
+            const note = { id: Date.now(), title: "Untitled", content: "", time: Date.now() };
+            notes.unshift(note);
+            selectNote(note.id);
+            triggerSave();
+        }
+
+        function renderSidebar() {
+            const list = document.getElementById('note-list');
+            list.innerHTML = '';
+            notes.sort((a,b) => b.time - a.time).forEach(n => {
+                const div = document.createElement('div');
+                div.className = `note-item ${n.id === activeNoteId ? 'active' : ''}`;
+                div.innerHTML = `<strong>${n.title || 'Untitled'}</strong>`;
+                div.onclick = () => selectNote(n.id);
+                list.appendChild(div);
+            });
+        }
+
+        function selectNote(id) {
+            activeNoteId = id;
+            const note = notes.find(n => n.id === id);
+            document.getElementById('title-in').value = note.title;
+            document.getElementById('body-in').value = note.content;
+            renderSidebar();
+        }
+
+        function triggerSave() {
+            const note = notes.find(n => n.id === activeNoteId);
+            if (note) {
+                note.title = document.getElementById('title-in').value;
+                note.content = document.getElementById('body-in').value;
+                note.time = Date.now();
+            }
+
+            clearTimeout(autoSaveTimer);
+            // Save 1 second after typing stops
+            autoSaveTimer = setTimeout(saveFileToDisk, 1000);
+        }
+
+        document.getElementById('title-in').oninput = triggerSave;
+        document.getElementById('body-in').oninput = triggerSave;
+
+    </script>
+</body>
+</html>
